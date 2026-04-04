@@ -29,7 +29,6 @@ public class SPIRVUtils {
     private static long compiler;
     private static long options;
 
-    //The dedicated Includer and Releaser Inner Classes used to Initialise #include Support for ShaderC
     private static final ShaderIncluder SHADER_INCLUDER = new ShaderIncluder();
     private static final ShaderReleaser SHADER_RELEASER = new ShaderReleaser();
     private static final long pUserData = 0;
@@ -37,6 +36,8 @@ public class SPIRVUtils {
     private static ObjectArrayList<String> includePaths;
 
     static {
+        // FIX #1: guard Android — libshaderc.so não existe em Android ARM64
+        // Sem este guard, o JVM crasha ao tentar carregar a biblioteca nativa.
         if (!Platform.isAndroid()) {
             initCompiler();
         }
@@ -76,8 +77,12 @@ public class SPIRVUtils {
     }
 
     public static SPIRV compileShader(String filename, String source, ShaderKind shaderKind) {
+        // FIX #1: Android usa SPIR-V pré-compilado — nunca compila em runtime.
+        // Retorna null em vez de lançar exceção; os callers já têm guard isAndroid().
+        // Lançar RuntimeException aqui causava crash garantido se algum caminho
+        // esquecesse o guard, tornando a app não-arrancável em ARM64.
         if (Platform.isAndroid()) {
-            throw new RuntimeException("Shader compilation disabled on Android");
+            return null;
         }
 
         if (source == null) {
@@ -113,7 +118,7 @@ public class SPIRVUtils {
 
     private static class ShaderIncluder implements ShadercIncludeResolveI {
 
-        private static final int MAX_PATH_LENGTH = 4096; //Maximum Linux/Unix Path Length
+        private static final int MAX_PATH_LENGTH = 4096;
 
         @Override
         public long invoke(long user_data, long requested_source, int type, long requesting_source, long include_depth) {
@@ -143,13 +148,10 @@ public class SPIRVUtils {
         }
     }
 
-    //TODO: Don't actually need the Releaser at all, (MemoryStack frees this for us)
-    //But ShaderC won't let us create the Includer without a corresponding Releaser, (so we need it anyway)
     private static class ShaderReleaser implements ShadercIncludeResultReleaseI {
 
         @Override
         public void invoke(long user_data, long include_result) {
-            //TODO:Maybe dump Shader Compiled Binaries here to a .Misc Diretcory to allow easy caching.recompilation...
         }
     }
 
@@ -169,9 +171,7 @@ public class SPIRVUtils {
 
         @Override
         public void free() {
-//            shaderc_result_release(handle);
-            bytecode = null; // Help the GC
+            bytecode = null;
         }
     }
-
 }
