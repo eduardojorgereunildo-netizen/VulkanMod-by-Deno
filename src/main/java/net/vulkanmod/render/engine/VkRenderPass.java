@@ -81,7 +81,9 @@ public class VkRenderPass implements RenderPass {
         this.pipeline = renderPipeline;
 
         if (ExtendedRenderPipeline.of(renderPipeline).getPipeline() == null) {
-            this.encoder.getDevice().compilePipeline(renderPipeline);
+            if (!net.vulkanmod.config.Platform.isAndroid()) {
+                this.encoder.getDevice().compilePipeline(renderPipeline);
+            }
         }
     }
 

@@ -26,6 +26,7 @@ public class ShaderManagerM {
         var pipelines = CustomRenderPipelines.pipelines;
 
         for (RenderPipeline renderPipeline : pipelines) {
+            if (net.vulkanmod.config.Platform.isAndroid()) return;
             CompiledRenderPipeline compiledRenderPipeline = gpuDevice.precompilePipeline(renderPipeline, compilationCache::getShaderSource);
         }
     }
