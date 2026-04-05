@@ -36,12 +36,12 @@ public class MemoryTypes {
         if (GPU_MEM != null && HOST_MEM != null)
             return;
 
-        // Could not find 1 or more MemoryTypes, need to use fallback
+        // Fallback para UMA (ex: Mali-G52) onde a memória é unificada
+        // DEVICE_LOCAL | HOST_VISIBLE | HOST_COHERENT num único tipo
         for (int i = 0; i < DeviceManager.memoryProperties.memoryTypeCount(); ++i) {
             VkMemoryType memoryType = DeviceManager.memoryProperties.memoryTypes(i);
             VkMemoryHeap heap = DeviceManager.memoryProperties.memoryHeaps(memoryType.heapIndex());
 
-            // GPU mappable memory
             if ((memoryType.propertyFlags() & (VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT)) == (VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT)) {
                 GPU_MEM = new DeviceMappableMemory(memoryType, heap);
             }
@@ -54,7 +54,7 @@ public class MemoryTypes {
                 return;
         }
 
-        // Could not find device memory, fallback to host memory
+        // Último recurso: usar memória de host para ambos
         GPU_MEM = HOST_MEM;
     }
 
@@ -68,7 +68,7 @@ public class MemoryTypes {
         public void createBuffer(Buffer buffer, long size) {
             MemoryManager.getInstance().createBuffer(buffer, size,
                     VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | buffer.usage,
-                    VK_MEMORY_HEAP_DEVICE_LOCAL_BIT);
+                    VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
         }
 
         @Override
@@ -129,11 +129,15 @@ public class MemoryTypes {
 
         @Override
         public void createBuffer(Buffer buffer, long size) {
+            // FIX #3: era VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT (flag errada).
+            // HostCoherentMemory deve alocar em memória host-visible e coherent.
+            // Em GPUs discretas, alocar DEVICE_LOCAL-only e depois tentar
+            // vkMapMemory retorna VK_ERROR_MEMORY_MAP_FAILED — crash garantido.
+            // Em Mali (UMA) passava por sorte mas era semanticamente incorreto.
             MemoryManager.getInstance().createBuffer(buffer, size,
-    VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | buffer.usage,
-    VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+                    VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | buffer.usage,
+                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
         }
-
     }
 
     static class HostLocalFallbackMemory extends MappableMemory {

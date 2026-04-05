@@ -17,6 +17,10 @@ import static org.lwjgl.vulkan.VK10.*;
 
 public abstract class ImageUtil {
 
+    // FIX #5: timeout de 5 segundos em todas as esperas de fence em ImageUtil.
+    // Previne freeze permanente em caso de GPU travado (Mali throttling).
+    private static final long FENCE_TIMEOUT_NS = 5_000_000_000L;
+
     public static void copyBufferToImageCmd(MemoryStack stack, VkCommandBuffer commandBuffer, long buffer,
                                             long image, int arrayLayer,
                                             int mipLevel, int width, int height, int xOffset, int yOffset,
@@ -54,7 +58,14 @@ public abstract class ImageUtil {
             image.transitionImageLayout(stack, commandBuffer.getHandle(), prevLayout);
 
             long fence = DeviceManager.getGraphicsQueue().submitCommands(commandBuffer);
-            vkWaitForFences(DeviceManager.vkDevice, fence, true, VUtil.UINT64_MAX);
+            vkWaitForFences(DeviceManager.vkDevice, fence, true, FENCE_TIMEOUT_NS);
+
+            // FIX #5: commandBuffer.reset() estava em falta.
+            // Sem este reset, o CommandBuffer nunca volta ao pool disponível.
+            // Após 10 chamadas a downloadTexture(), o CommandPool alocava mais 10 buffers.
+            // Em sessão longa (screenshots frequentes, debug), o pool esgotava
+            // e vkAllocateCommandBuffers começava a falhar com VK_ERROR_OUT_OF_HOST_MEMORY.
+            commandBuffer.reset();
 
             MemoryManager.MapAndCopy(pStagingAllocation.get(0),
                                      (data) -> VUtil.memcpy(data.getByteBuffer(0, (int) imageSize), ptr));
@@ -76,7 +87,10 @@ public abstract class ImageUtil {
             image.transitionImageLayout(stack, commandBuffer.getHandle(), prevLayout);
 
             long fence = DeviceManager.getGraphicsQueue().submitCommands(commandBuffer);
-            vkWaitForFences(DeviceManager.vkDevice, fence, true, VUtil.UINT64_MAX);
+            vkWaitForFences(DeviceManager.vkDevice, fence, true, FENCE_TIMEOUT_NS);
+
+            // FIX #5 (aplicado também aqui por consistência)
+            commandBuffer.reset();
         }
     }
 
@@ -106,7 +120,6 @@ public abstract class ImageUtil {
 
             dstImage.transitionImageLayout(stack, commandBuffer, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
 
-            // TODO: hardcoded srcImage
             VulkanImage srcImage = Renderer.getInstance().getSwapChain().getColorAttachment();
 
             srcImage.transitionImageLayout(stack, commandBuffer, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
@@ -227,7 +240,10 @@ public abstract class ImageUtil {
 
             long fence = DeviceManager.getGraphicsQueue().submitCommands(commandBuffer);
 
-            vkWaitForFences(DeviceManager.vkDevice, fence, true, VUtil.UINT64_MAX);
+            vkWaitForFences(DeviceManager.vkDevice, fence, true, FENCE_TIMEOUT_NS);
+
+            // FIX #5: reset do command buffer após generateMipmaps também
+            commandBuffer.reset();
         }
     }
 }

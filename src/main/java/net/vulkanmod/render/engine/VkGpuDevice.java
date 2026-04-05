@@ -17,6 +17,7 @@ import net.fabricmc.api.Environment;
 import net.minecraft.client.renderer.ShaderDefines;
 import net.minecraft.resources.ResourceLocation;
 import net.vulkanmod.Initializer;
+import net.vulkanmod.config.Platform;
 import net.vulkanmod.gl.VkGlTexture;
 import net.vulkanmod.interfaces.shader.ExtendedRenderPipeline;
 import net.vulkanmod.render.shader.ShaderLoadUtil;
@@ -287,14 +288,22 @@ public class VkGpuDevice implements GpuDevice {
         });
     }
 
+    // FIX Android: precompilePipeline não deve compilar shaders em Android.
+    // Em Android, os shaders SPIR-V são pré-compilados. Tentar compilar aqui
+    // causa RuntimeException porque libshaderc não existe em ARM64 Android.
+    // O VkRenderPipeline retornado é válido — a pipeline real é criada
+    // na primeira utilização via getOrCreatePipeline() em VkCommandEncoder.
     public CompiledRenderPipeline precompilePipeline(RenderPipeline renderPipeline, @Nullable BiFunction<ResourceLocation, ShaderType, String> shaderSourceGetter) {
-        shaderSourceGetter = shaderSourceGetter == null ? this.defaultShaderSource : shaderSourceGetter;
-        compilePipeline(renderPipeline, shaderSourceGetter);
+        if (!Platform.isAndroid()) {
+            shaderSourceGetter = shaderSourceGetter == null ? this.defaultShaderSource : shaderSourceGetter;
+            compilePipeline(renderPipeline, shaderSourceGetter);
+        }
 
         return new VkRenderPipeline(renderPipeline);
     }
 
     public void compilePipeline(RenderPipeline renderPipeline) {
+        if (Platform.isAndroid()) return;
         this.compilePipeline(renderPipeline, this.defaultShaderSource);
     }
 

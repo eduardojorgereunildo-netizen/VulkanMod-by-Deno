@@ -1,6 +1,7 @@
 package net.vulkanmod.vulkan.queue;
 
 import it.unimi.dsi.fastutil.objects.ObjectArrayList;
+import net.vulkanmod.Initializer;
 import net.vulkanmod.vulkan.Vulkan;
 import org.lwjgl.PointerBuffer;
 import org.lwjgl.system.MemoryStack;
@@ -14,6 +15,12 @@ import static org.lwjgl.system.MemoryStack.stackPush;
 import static org.lwjgl.vulkan.VK10.*;
 
 public class CommandPool {
+    // FIX #4: timeout máximo para operações GPU — evita freeze permanente se
+    // o GPU travar (overtemperature, throttling agressivo em Mali ARM64).
+    // Long.MAX_VALUE anterior ≈ 292 anos: GPU trava → app bloqueia para sempre.
+    // 5 segundos é tempo suficiente para qualquer frame normal e detecta travamentos reais.
+    private static final long FENCE_TIMEOUT_NS = 5_000_000_000L; // 5 segundos
+
     long id;
 
     private final List<CommandBuffer> commandBuffers = new ObjectArrayList<>();
@@ -180,8 +187,21 @@ public class CommandPool {
         public void reset() {
             VkDevice device = Vulkan.getVkDevice();
 
-            // Wait for GPU to finish, then reset fence and command buffer for clean reuse.
-            vkWaitForFences(device, new long[]{this.fence}, true, Long.MAX_VALUE);
+            // FIX #4: timeout finito — Long.MAX_VALUE anterior bloqueava para
+            // sempre se o GPU Mali travasse por throttling ou overtemperature.
+            // 5 segundos deteta GPU travado e regista aviso em vez de freeze permanente.
+            int result = vkWaitForFences(device, new long[]{this.fence}, true, FENCE_TIMEOUT_NS);
+
+            if (result == VK_TIMEOUT) {
+                Initializer.LOGGER.error(
+                    "CommandBuffer fence timeout ({}ms) — GPU pode estar travado. "
+                    + "A forçar reset para libertar o pool.",
+                    FENCE_TIMEOUT_NS / 1_000_000);
+                // Continua mesmo em timeout: melhor libertar o buffer que bloquear
+            } else if (result != VK_SUCCESS) {
+                Initializer.LOGGER.warn("vkWaitForFences retornou código inesperado: {}", result);
+            }
+
             vkResetFences(device, new long[]{this.fence});
             vkResetCommandBuffer(this.handle, 0);
 

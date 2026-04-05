@@ -45,7 +45,6 @@ public class VulkanImage {
 
     private int currentLayout;
 
-    // Used for already allocated images e.g. swap chain images
     public VulkanImage(String name, long id, int format, int mipLevels, int width, int height, int formatSize, int usage, long imageView) {
         this.id = id;
         this.mainImageView = imageView;
@@ -230,8 +229,6 @@ public class VulkanImage {
 
         StagingBuffer stagingBuffer = Vulkan.getStagingBuffer();
 
-        // Use a temporary staging buffer if the upload size is greater than
-        // the default staging buffer
         if (uploadSize > stagingBuffer.getBufferSize()) {
             stagingBuffer = new StagingBuffer(uploadSize);
             stagingBuffer.scheduleFree();
@@ -265,10 +262,6 @@ public class VulkanImage {
             return;
 
         try (MemoryStack stack = MemoryStack.stackPush()) {
-            // Always use the main command buffer.
-            // When inside a render pass, using ImageUploadHelper's separate CB caused
-            // the transition to be submitted AFTER the descriptor set was already bound
-            // with SHADER_READ_ONLY_OPTIMAL layout declared — GPU read wrong layout → purple/invisible textures.
             readOnlyLayout(stack, Renderer.getCommandBuffer());
         }
     }
@@ -292,6 +285,10 @@ public class VulkanImage {
 
         int sourceStage, srcAccessMask, destinationStage, dstAccessMask = 0;
 
+        // FIX #2: VK_IMAGE_LAYOUT_GENERAL adicionado em ambos os switches.
+        // Storage images (ImageDescriptor com isStorageImage=true) usam este layout.
+        // O switch original lançava RuntimeException, causando crash durante gameplay
+        // quando qualquer storage image precisava de transição de layout.
         switch (image.currentLayout) {
             case VK_IMAGE_LAYOUT_UNDEFINED -> {
                 srcAccessMask = 0;
@@ -321,7 +318,13 @@ public class VulkanImage {
                 srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
                 sourceStage = VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
             }
-            default -> throw new RuntimeException("Unexpected value:" + image.currentLayout);
+            // FIX #2 — layout GENERAL (usado por storage images e compute)
+            case VK_IMAGE_LAYOUT_GENERAL -> {
+                srcAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+                sourceStage = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT
+                            | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+            }
+            default -> throw new RuntimeException("Unexpected src layout: " + image.currentLayout);
         }
 
         switch (newLayout) {
@@ -348,7 +351,13 @@ public class VulkanImage {
             case VK_IMAGE_LAYOUT_PRESENT_SRC_KHR -> {
                 destinationStage = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
             }
-            default -> throw new RuntimeException("Unexpected value:" + newLayout);
+            // FIX #2 — layout GENERAL como destino
+            case VK_IMAGE_LAYOUT_GENERAL -> {
+                dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+                destinationStage = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT
+                                 | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+            }
+            default -> throw new RuntimeException("Unexpected dst layout: " + newLayout);
         }
 
         transitionLayout(stack, commandBuffer, image, image.currentLayout, newLayout,
@@ -470,7 +479,6 @@ public class VulkanImage {
         int usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
         int viewType = VK_IMAGE_VIEW_TYPE_2D;
 
-        // Sampler settings
         boolean linearFiltering = false;
         boolean clamp = false;
         int reductionMode = -1;
@@ -480,7 +488,7 @@ public class VulkanImage {
             this.height = height;
         }
 
-        public Builder setName(String name) {
+              public Builder setName(String name) {
             this.name = name;
             return this;
         }
@@ -509,7 +517,7 @@ public class VulkanImage {
             this.usage |= usage;
             return this;
         }
-        
+
         public Builder setViewType(int viewType) {
             this.viewType = viewType;
             return this;
@@ -546,7 +554,7 @@ public class VulkanImage {
                 case VK_FORMAT_R8_UNORM -> 1;
                 case VK_FORMAT_R16G16B16A16_SFLOAT -> 8;
 
-                default -> throw new IllegalArgumentException(String.format("Unxepcted format: %s", format));
+                default -> throw new IllegalArgumentException(String.format("Unexpected format: %s", format));
             };
         }
     }
